@@ -1,0 +1,728 @@
+'/////////////////////////////////////////////////////////////////////////////////////////
+'//VBSCRIPT VERSION:        STD_VBS_WORD_08292003_V2 (PLEASE DO NOT CHANGE!!!)          //
+'//Public Folder:           CONFIRMATION                                                //
+'//Outlook Form:            STD_Swap_Confirmation.oft                                   //
+'//Word Document Template:  STD_IRS_Confirmation.doc                                    //
+'// 				    STD_CS_Confirmation.doc                                     //
+'//AVS Script File Name:    STD_Swap_Confirm.mls                                        //
+'//Author:                  Donald Chan                                                 //
+'//Last Update:             Dec 4, 2003                                                 //
+'//Description/Note:        This form is created in Outlook 2000 with Exchange 2000     //
+'/////////////////////////////////////////////////////////////////////////////////////////
+'----------------------------------------------------------------------------------------
+'----------------------------------------------------------------------------------------
+
+Dim objDoc
+Dim objApp
+
+'-----------------------------------------------------------------------------------------
+'/////////////////////////////////////////////////////////////////////////////////////////
+'Name:          Item_Open()
+'
+'Description:   This Microsoft-defined function is called when an item is being open.
+'               It opens a Word document and populates the data from the Message
+'               store.
+'
+'Parameters:    NONE
+'
+'Returns:       TRUE    -   if the item was opened successfully
+'               FALSE   -   if any errors occurred.  Microsoft uses the return
+'               code to determine open action
+'
+'Date of Last Revisition: Feb 22, 2002
+'/////////////////////////////////////////////////////////////////////////////////////////
+Function Item_Open()
+    
+    'stop
+
+    Call FORM_Initialize("P.2")
+    
+    If DOC_Open(objApp, objDoc) = False Then
+        Exit Function
+    End If
+
+    Item_Open = True
+
+End Function
+
+'--------------------------------------------------------------------------------------------
+'///////////////////////////////////////////////////////////////////////////////////////////
+'Name:          Item_Close()
+'
+'Description:   This Microsoft-defined function is called when an item is being closed.
+'               It calls DOC_Close function to close Word document and its application object.
+'
+'Parameters:    NONE
+'
+'Returns:       Status of DOC_Close() - TRUE / FALSE
+'               TRUE    -   if the item was closed successfully
+'               FALSE   -   if any errors occurred.  Microsoft uses the return
+'                           code to determine close action
+'
+'Date of Last Revisition:   AUG 29, 2002
+'/////////////////////////////////////////////////////////////////////////////////////////////
+Function Item_Close()
+    Item_Close = DOC_Close(objApp, objDoc)
+End Function
+
+
+'--------------------------------------------------------------------------------------------
+'///////////////////////////////////////////////////////////////////////////////////////////
+'Name:          Item_Forward()
+'
+'Description:   Override Microsoft-defined function Item_Forward() to print Word Document.
+'
+'Parameters:    NONE
+'
+'Returns:       Default value
+'               NOTE: This function must return the default value.
+'                     Do not try to set Item_Forward to any value!
+'
+'
+'Date of Last Revisition:   AUG 29, 2002
+'////////////////////////////////////////////////////////////////////////////////////////////
+Function Item_Forward(ByVal myForWardItem)
+   On Error Resume Next
+   Err.Clear
+
+   '//set printer
+   Dim strPrinterName
+   Dim strPrinterPort
+   Dim strActivePrinter
+
+   strPrinterName = OLF_GetField("olfPrinterName")
+   strPrinterName = Trim(strPrinterName)
+   strPrinterPort = OLF_GetField("olfPrinterPort")
+   strPrinterPort = Trim(strPrinterPort)
+
+   If strPrinterName <> "" And strPrinterPort <> "" Then
+    strActivePrinter = strPrinterName & " on " & strPrinterPort & ":"
+    objApp.ActivePrinter = strActivePrinter
+   End If
+ 
+   '//print out document
+    objDoc.PrintOut
+End Function 
+
+
+'---------------------------------------------------------------------------------------------
+'///////////////////////////////////////////////////////////////////////////////////////////
+'Name:          cmdClose_Click()
+'
+'Description:   Close Word document and outlook form and exit program,
+'               and prompts the user for saving changes.
+'
+'Parameters:    NONE
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 22, 2002
+'/////////////////////////////////////////////////////////////////////////////////////////////
+Sub cmdClose_Click()
+    Const olPromptForSave = 2
+      Item.Close olPromptForSave
+End Sub
+
+
+
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_Open(ByRef objApplication, ByRef objDocument )
+'
+'Description:   This function opens a Word document and populates the
+'               data from the Message store
+'
+'Parameters:    objApplication  (OUT)   - an instance of the Application object
+'               objDocument (OUT)       - an instance of the Word Document object
+'
+'Returns:       TRUE    -   if the data was successfully populated on the
+'                           Word document and no errors occurred
+'               FALSE   -   if any errors occurred
+'
+'Date of Last Revisition:   Feb 22, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function DOC_Open(ByRef objApplication, ByRef objDocument)
+
+    On Error Resume Next
+    Err.Clear
+
+    '//Create Word Application and Document Objects.
+    If DOC_CreateWordObjects(objApplication, objDocument) = False Then
+        DOC_Open = False
+        Exit Function
+    End If
+    
+    '//Set Visible to false until all fields are populated.
+    '//This makes a pop-up result
+    Call DOC_SetVisible(objApplication, False)
+    
+    '//Set Confirmation/Documentation Status
+    If DOC_SetStatus(objDocument) = False Then
+        MsgBox "Unable to set Status in Word document file " & OLF_GetField("olfFileNameWithPath"), _
+             vbCritical, _
+             "Error"
+    End If
+ 
+    '//Populate all data to Word document
+    Call DOC_AutoPopulateData(objDocument)
+    
+    '//Ajout de l'adresse en pied de page
+    Call DOC_Adresse(objApplication,objDocument)
+
+    '//Turn this function on for debugging, otherwise off
+    'Call OnErrorShowMessage()
+
+    '//Now that the fields are populated, show the Word document
+    Call DOC_SetVisible(objApplication, True)
+ 
+    DOC_Open = True
+End Function
+'----------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_CreateWordObjects(ByRef objWordApplication, ByRef objWordDocument)
+'
+'Description:   This function creates an Application object and a Word document object.
+'               NOTICE: If it fails to create either one of these objects,
+'               Word document cannot be run.
+'
+'Parameters:    objWordApplication  (IN/OUT)   - an instance of the Application object
+'               objWordDocument (IN/OUT)   - an instance of the Word Document object
+'
+'Returns:       TRUE    -   if both objects are sucessfully created with no errors.
+'               FALSE   -   if failed to create either object or any errors occurrs.
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function DOC_CreateWordObjects(ByRef objWordApplication, ByRef objWordDocument)
+
+    On Error Resume Next
+    Err.Clear
+
+    Dim objWordApp
+
+    '//Create instance of Word Application Object
+    Set objWordApp = CreateObject("Word.Application")
+
+    '//Exit if unable to create word Application object.
+    If objWordApp Is Nothing Then
+        MsgBox "Couldn't start Word.", vbCritical, "Error"
+        DOC_CreateWordObjects = False
+        Exit Function
+    End If
+
+    '//Open a new document
+    Dim objWordDoc
+    
+    Dim strDocumentFileNameWithFullPath
+    strDocumentFileNameWithFullPath = OLF_GetField("olfFileNameWithPath")
+    strDocumentFileNameWithFullPath = Trim(strDocumentFileNameWithFullPath)
+
+    If strDocumentFileNameWithFullPath <> "" And strDocumentFileNameWithFullPath <> "-" Then
+        Set objWordDoc = objWordApp.Documents.Add(strDocumentFileNameWithFullPath)
+    End If
+
+    If objWordDoc Is Nothing Then
+        If strDocumentFileNameWithFullPath = "" Then
+            If IsExit(objWordApp) = True Then
+                objWordApp.Quit
+            End If
+        End If
+        
+        Call Object_Destroy(objWordApp)
+
+        MsgBox "The Word document file " & strDocumentFileNameWithFullPath & _
+                 " not found!", _
+                vbCritical, _
+                "Couldn't start Word."
+        DOC_CreateWordObjects = False
+        Exit Function '//Exit if unable to create word document object.
+    End If
+    
+    '//Turn this function on for debugging, otherwise turn it off
+    'Call OnErrorShowMessage()
+
+    '//point objWordDoc (document object) to objDocc
+    Set objWordDocument = objWordDoc
+
+    '//Set oApp point to objWordApp
+    Set objWordApplication = objWordApp
+    
+    DOC_CreateWordObjects = True
+    
+End Function
+'----------------------------------------------------------------------------------------
+
+'----------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_SetVisible(ByRef objWordApplication, ByRef blnTrueFalse)
+'
+'Description:   This function sets the visibility of the Word document to True of False,
+'           depending on blnTrueFalse.
+'
+'Parameters:    objWordApplication  (IN)   - the Word Application object
+'               blnTrueFalse (IN)          -  True or False
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Sub DOC_SetVisible(ByRef objWordApplication, ByRef blnTrueFalse)
+    '//set Visible to false until all fields are populated.
+    objWordApplication.Visible = blnTrueFalse
+End Sub
+
+
+'----------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_AutoPopulateData(ByRef objDocument)
+'
+'Description:   This function automatically populate all data to Word document
+'
+'Parameters:    objDocument  (IN)   - the Word Document object
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Sub DOC_AutoPopulateData(ByRef objDocument)
+    On Error Resume Next
+
+    '//if object objDocument doesn't exist, exit.
+    '//else point objAutoDoc to objDocument
+    If IsExist(objDocument) = True Then
+        Dim objAutoDoc
+        Set objAutoDoc = objDocument
+    Else
+        MsgBox "Unable to populate data into Word document because " & _
+                "the Word Document object does not exist.", _
+                vbCritical, "Error: object not exist"
+        Exit Sub
+    End If
+
+    '//If the form contains user-defined fields,
+    '//transfer the contents of user-defined field( FieldName) to Word:
+    Dim intTotalFields
+    Dim strDocFieldName
+    Dim strOlfFieldName
+    Dim strFieldValue
+    Dim intFound
+    Dim i
+
+    intTotalFields = objAutoDoc.FormFields.Count
+    For i = 1 To intTotalFields
+        strDocFieldName = ""
+        strDocFieldName = objAutoDoc.FormFields.Item(i).Name
+	  
+
+        If (strDocFieldName <> "") And (strDocFieldName <> "olfConfStatus") Then
+            intFound = InStr(1, strDocFieldName, "_")
+
+            If intFound <> 0 Then
+                strOlfFieldName = Left(strDocFieldName, intFound - 1)
+		Else
+                strOlfFieldName = strDocFieldName
+            End If
+
+            strFieldValue = ""
+            strFieldValue = Item.UserProperties.Find(strOlfFieldName)
+
+            If strFieldValue <> "" Then
+                If InStr(1, strFieldValue, vbLf) <> 0 Then   '//find with listbox
+                    strFieldValue = Replace(strFieldValue, vbLf, vbCr)
+		    End If
+
+                objAutoDoc.FormFields(strDocFieldName).Result = strFieldValue
+            End If
+        End If
+    Next
+End Sub
+
+'----------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          IsExist(ByRef varName)
+'
+'Description:   This function determines the variable and object status.
+'
+'Parameters:    varName (IN)   - variable name, such as an object or a datatype
+'
+'Returns:       True  - object exists
+'               False - object does not exist
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function IsExist(ByRef varName)
+    Dim strStatus
+    strStatus = ""
+
+    strStatus = TypeName(varName)
+    Select Case LCase(strStatus)
+        Case ""
+            IsExist = False
+        Case "empty"
+            IsExist = False
+        Case "nothing"
+            IsExist = False
+        Case "null"
+            IsExist = False
+        Case Else
+            IsExist = True
+    End Select
+End Function
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_SetField(ByRef objDoc, ByVal strDocFieldName, ByVal strDocFieldValue)
+'
+'Description:   Sets a particular data or value to a given field in Word document.
+'
+'Parameters:    strDocFieldName  (IN)   -  a given field in Word document.
+'               strDocFieldValue (IN)   -  a value;
+'                                       -  If the value is a Table format in Endur,
+'                                        it will be automatically convert to
+'                                    Visual Basic format.
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 22, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Sub DOC_SetField(ByRef objDoc, ByVal strDocFieldName, ByVal strDocFieldValue)
+
+    on error resume next
+
+    strDocFieldName = Trim(strDocFieldName)
+
+    '//find Table value in Endur and convert it to VB value
+    If InStr(1, strDocFieldValue, vbLf) <> 0 Then
+        strDocFieldValue = Replace(strDocFieldValue, vbLf, vbCr)
+    End If
+
+    objDoc.FormFields(strDocFieldName).Result = strDocFieldValue
+End Sub
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          OLF_GetField(ByVal strFieldNameFromEndur)
+'
+'Description:   Retrieves a particular data or value from the Message store
+'               for a given field.
+'
+'Parameters:    strFieldNameFromEndur (IN)  -  Field name from the Message store to
+'                                retrieve the value for.
+'
+'Returns:       If the field name exists, returns the value it retrieves from Message store.
+'               If the field name does not exist, returns an empty string ("")
+'
+'Date of Last Revisition:   Feb 22, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function OLF_GetField(ByVal strFieldNameFromEndur)
+
+    strFieldNameFromEndur = Trim(strFieldNameFromEndur)
+    If strFieldNameFromEndur <> "" Then
+        OLF_GetField = Item.UserProperties.Find(strFieldNameFromEndur)
+    Else
+        OLF_GetField = ""
+    End If
+
+End Function
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_Close(ByRef objApplication, ByRef objDocument)
+'
+'Description:   This function closes a Word document, destroys its objects, and send
+'               confirmation status ("olfConfStatus") back to the message store.
+'
+'Parameters:    objApplication (IN/OUT)   - the Word Application object
+'               objDocument (IN/OUT)     -  the Word Document object
+'
+'Returns:       TRUE    -   if no errors occurred
+'               FALSE   -   if any errors occurred
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function DOC_Close(ByRef objApplication, ByRef objDocument)
+    On Error Resume Next
+    Err.Clear
+
+    '//Exit if object no longer exist;
+    '//or object never be created.
+    If IsExist(objApplication) = False Or IsExist(objDocument) = False Then
+
+          If IsExist(objDocument) = True Then
+            Call Object_Destroy(objDocument)
+      End If
+
+      If IsExist(objApplication) = True Then
+            Call Object_Destroy(objApplication)
+        End If
+
+        Exit Function
+    End If
+
+    '//Save status back to the Message store.
+    If OLF_Update(objDocument) = False Then
+        MsgBox "Unable to save Status " & Chr(34) & "olfConfStatus" & Chr(34) & _
+            " back to Outlook/Exchange! " & _
+            vbCrLf & "Word Document may have been closed already.", _
+            vbCritical, _
+            "Error: Failed To Save Status."
+    End If
+
+    '//Show message if error occurs
+    'Call OnErrorShowMessage()
+        
+    ' Close and don't save changes to the document
+    Const wdDoNotSaveChanges = 0
+    objDocument.Close wdDoNotSaveChanges
+
+    '//Close Word Application instance
+    objApplication.Quit
+
+    '//Clean up
+    Call Object_Destroy(objApplication)
+    Call Object_Destroy(objDocument)
+
+    DOC_Close = True
+End Function
+
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          OLF_Update(ByRef objDocument)
+'
+'Description:   Update olfConfStatus and olfUpdateConf in Exchange (Message store)
+'               When modifying this function, please reference to outbound_doc_status
+'           database table.
+'
+'Parameters:    objDocument (IN)   -  the Word Document object
+'
+'Returns:       TRUE    -   if no errors occurred
+'               FALSE   -   if any errors occurred
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function OLF_Update(ByRef objDocument)
+
+    Dim dblCurrentStatus, dblPreviousStatus
+    Dim intDOCCurrentConfStatus
+
+    intDOCCurrentConfStatus = objDocument.FormFields("olfConfStatus").DropDown.Value
+      
+
+    Select Case intDOCCurrentConfStatus
+        Case 1
+            dblCurrentStatus = 3
+        Case 2, 3, 4, 5, 6, 7, 8
+          dblCurrentStatus = intDOCCurrentConfStatus + 3
+        Case Else
+            dblCurrentStatus = -1
+    End Select
+
+    dblPreviousStatus = OLF_GetField("olfConfStatus")
+ 
+    '//if new document has been generated and confirmation status
+    '//has not been change, exit and do nothing
+    If dblPreviousStatus = 0 And dblCurrentStatus = 3 Then
+      OLF_Update = True
+        Exit Function
+    End If
+
+    If dblCurrentStatus > 0 Then
+    
+        '//if nothing changed, exit fucntion
+        If dblPreviousStatus = dblCurrentStatus Then
+            OLF_Update = True
+        Else
+            '//update olfConfStatus
+            Item.UserProperties.Find("olfConfStatus") = dblCurrentStatus
+
+            '//set olfUpdateConf to 1 so that Endur can correctly
+            '//update the confirmation status.
+            Item.UserProperties.Find("olfUpdateConf") = 1
+        
+            OLF_Update = True
+        End If
+    Else
+        OLF_Update = False
+    End If
+End Function
+
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_SetStatus(ByRef objDocument)
+'
+'Description:   Set "olfConfStatus" value in Word document
+'               When modifying this function, please reference to outbound_doc_status
+'           database table.
+'
+'Parameters:    objDocument (IN)   -  the Word Document object
+'
+'Returns:       TRUE    -   if no errors occurred
+'               FALSE   -   if any errors occurred
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function DOC_SetStatus(ByRef objDocument)
+    Dim dblConStatus
+    Dim intOLFConfStatus
+    Dim intDOCConfStatus
+    
+    dblConStatus = OLF_GetField("olfConfStatus")
+
+    '//if olfConfStatus exists, coverts it to integer
+    '//exit if unable to find olfConfStatus
+    If IsExist(dblConStatus) = True Then
+          intOLFConfStatus = CInt(dblConStatus)
+    Else
+      DOC_SetStatus = False
+      Exit Function
+    End If
+
+    '//Adjust value since drop-down list starts at index 1
+  
+    Select Case intOLFConfStatus
+         Case 0, 3
+            intDOCConfStatus = 1
+         Case 5, 6, 7, 8, 9, 10, 11
+            intDOCConfStatus = intOLFConfStatus - 3
+         Case Else
+            intDOCConfStatus = -1
+    End Select
+
+
+    '//set confirmation status in Word document
+    If intDOCConfStatus > 0 Then
+        objDocument.FormFields("olfConfStatus").DropDown.Value = intDOCConfStatus
+        DOC_SetStatus = True
+    Else
+        DOC_SetStatus = False
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          OnErrorShowMessage()
+'
+'Description:   Show error description for debugging
+'
+'Parameters:    objDocument (IN)   -  the Word Document object
+'
+'Returns:       TRUE    -   if no errors occurred
+'               FALSE   -   if any errors occurred
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Function OnErrorShowMessage()
+    If Err.Number <> 0 Then
+
+        Dim strMsg
+        strMsg = Err.Description
+        strMsg = strMsg & vbCrLf & "Click OK to Exit..."
+
+        MsgBox strMsg, vbCritical, "Error: Unable to continue..."
+
+        OnErrorShowMessage = True
+    Else
+        OnErrorShowMessage = False
+    End If
+End Function
+
+
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          Object_Destroy(ByRef objectName)
+'
+'Description:   Destroy the object if it exists
+'
+'Parameters:    objectName(OUT)   -  the object name
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 25, 2002
+'//////////////////////////////////////////////////////////////////////////////////////
+Sub Object_Destroy(ByRef objectName)
+    If TypeName(objectName) <> "" Then
+        Set objectName = Nothing
+    End If
+End Sub
+
+ 
+'---------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          FORM_Initialize(ByVal strCurrentPageName)
+'
+'Description:   Sets strCurrentPageName as the initial page, and hides "Message" page.
+'               NOTICE: If the user does not use "Display This Page" in Form menu to set
+'               page to be display, by default, the current page is P.2 and it
+'               will not show on run-time.
+'
+'Parameters:    strCurrentPageName (IN)   - Name of current page.
+'                                         - By default, it is "P.2"
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   Feb 25, 2002
+'////////////////////////////////////////////////////////////////////////////////////////
+Sub FORM_Initialize(ByVal strCurrentPageName)
+
+    strCurrentPageName = Trim(strCurrentPageName)
+    
+    '//set default value to "P.2" to empty
+    If strCurrentPageName = "" Then
+        strPageName = "P.2"
+    End If
+    
+    Item.GetInspector.SetCurrentFormPage strCurrentPageName
+    Item.GetInspector.ShowFormPage strCurrentPageName
+    Item.GetInspector.HideFormPage "Message"
+End Sub
+'------------------------------------------------------------------------------------------------
+ 
+'----------------------------------------------------------------------------------------
+'////////////////////////////////////////////////////////////////////////////////////////
+'Name:          DOC_Adresse(ByRef objApplication, ByRef objDocument)
+'
+'Description:   Ajout de l'adresse en pied de page et du Logo en entete
+'
+'Parameters:    objDocument  (IN)   - the Word Document object
+'
+'Returns:       NONE
+'
+'Date of Last Revisition:   08/01/2013
+'//////////////////////////////////////////////////////////////////////////////////////
+Sub DOC_Adresse(ByRef objApplication, ByRef objDocument)
+    On Error Resume Next
+
+    Dim i
+
+    sauveviewtype=objDocument.ActiveWindow.View.Type
+    strTemplateDir = OLF_GetField("olfTemplateDir")
+
+
+    If objDocument.Bookmarks.Exists("olfAdresse") = True Then
+        objDocument.Bookmarks("olfAdresse").Select
+	      objApplication.Selection.InsertFile strTemplateDir & OLF_GetField("olfAdresse")
+    End If
+
+    If objDocument.Bookmarks.Exists("olfLogo") = True Then
+        objDocument.Bookmarks("olfLogo").Select
+	      objApplication.Selection.InsertFile strTemplateDir & OLF_GetField("olfLogo")
+    End If
+
+    i=1
+    
+    While objDocument.Bookmarks.Exists("olfLogo_" & i) = True 
+        objDocument.Bookmarks("olfLogo_" & i).Select
+	      objApplication.Selection.InsertFile strTemplateDir & OLF_GetField("olfLogo")
+        i=i+1
+    Wend
+
+    objApplication.ActiveWindow.ActivePane.Close()
+    objDocument.ActiveWindow.View.Type=sauveviewtype
+    
+End Sub
+   
